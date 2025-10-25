@@ -24,7 +24,6 @@
   <script type="text/babel">
     const { useState, useEffect } = React;
 
-    // Конфигурация
     const SUPABASE_URL = 'https://gtinslbrwdpqkxeibuqs.supabase.co';
     const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd0aW5zbGJyd2RwcWt4ZWlidXFzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjExMjM1MjMsImV4cCI6MjA3NjY5OTUyM30.3LbYP6AcsQ-qVZtdMgH6pJYX0rWLFGSUmT6errUwJOY';
     const BOT_TOKEN = '8210216557:AAFeNn2-EW1nnbL-Ahyk3f1dpq3JjrlniCI';
@@ -33,7 +32,7 @@
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     const AdminPanel = () => {
-      const [activeTab, setActiveTab] = useState('products');
+      const [activeTab, setActiveTab] = useState('products'); // products, orders, settings
       const [products, setProducts] = useState([]);
       const [orders, setOrders] = useState([]);
       const [loading, setLoading] = useState(true);
@@ -41,6 +40,14 @@
       const [showProductForm, setShowProductForm] = useState(false);
       const [productForm, setProductForm] = useState({
         name: '', description: '', price: '', category: '', image: ''
+      });
+      
+      // Настройки магазина
+      const [settings, setSettings] = useState({
+        kaspi_phone: '',
+        kaspi_link: '',
+        shop_name: 'Наша Кондитерская',
+        payment_enabled: false
       });
 
       useEffect(() => {
@@ -56,7 +63,52 @@
         setLoading(true);
         await loadProducts();
         await loadOrders();
+        await loadSettings();
         setLoading(false);
+      };
+
+      const loadSettings = async () => {
+        try {
+          const { data, error } = await supabase
+            .from('settings')
+            .select('*')
+            .limit(1)
+            .single();
+
+          if (data) {
+            setSettings(data);
+          }
+        } catch (error) {
+          console.log('Настройки не найдены, используем дефолтные');
+        }
+      };
+
+      const saveSettings = async () => {
+        try {
+          const { data: existing } = await supabase
+            .from('settings')
+            .select('id')
+            .limit(1)
+            .single();
+
+          if (existing) {
+            const { error } = await supabase
+              .from('settings')
+              .update(settings)
+              .eq('id', existing.id);
+            if (error) throw error;
+          } else {
+            const { error } = await supabase
+              .from('settings')
+              .insert([settings]);
+            if (error) throw error;
+          }
+          
+          alert('✅ Настройки сохранены!');
+        } catch (error) {
+          console.error('Ошибка сохранения настроек:', error);
+          alert('❌ Ошибка сохранения настроек');
+        }
       };
 
       const loadProducts = async () => {
@@ -84,15 +136,6 @@
           setOrders(data || []);
         } catch (error) {
           console.error('Ошибка загрузки заказов:', error);
-        }
-      };
-
-      const saveProducts = async (newProducts) => {
-        try {
-          await window.storage.set('products', JSON.stringify(newProducts), true);
-          setProducts(newProducts);
-        } catch (error) {
-          alert('Ошибка сохранения товаров');
         }
       };
 
@@ -167,13 +210,8 @@
         setShowProductForm(false);
       };
 
-      // 🔔 НОВАЯ ФУНКЦИЯ: Отправка уведомления клиенту
       const sendStatusNotification = async (order, newStatus) => {
-        // Проверяем, есть ли у клиента Telegram ID
-        if (!order.telegram_user_id) {
-          console.log('У заказа нет Telegram ID клиента');
-          return;
-        }
+        if (!order.telegram_user_id) return;
 
         try {
           let message = '';
@@ -200,10 +238,9 @@
               break;
               
             default:
-              return; // Не отправляем уведомление для статуса "new"
+              return;
           }
 
-          // Отправляем через Telegram Bot API
           const telegramApiUrl = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
           
           const response = await fetch(telegramApiUrl, {
@@ -220,13 +257,11 @@
 
           const result = await response.json();
           
-          if (result.ok) {
-            console.log('✅ Уведомление отправлено клиенту!');
-          } else {
-            console.error('❌ Ошибка отправки клиенту:', result);
+          if (!result.ok) {
+            console.error('Ошибка отправки клиенту:', result);
           }
         } catch (error) {
-          console.error('❌ Ошибка отправки уведомления клиенту:', error);
+          console.error('Ошибка отправки уведомления клиенту:', error);
         }
       };
 
@@ -235,7 +270,6 @@
           const order = orders.find(o => o.id === orderId);
           if (!order) return;
 
-          // Обновляем статус в базе
           const { error } = await supabase
             .from('orders')
             .update({ status: newStatus })
@@ -243,15 +277,12 @@
 
           if (error) throw error;
 
-          // Отправляем уведомление клиенту
           await sendStatusNotification(order, newStatus);
 
-          // Обновляем локальное состояние
           setOrders(orders.map(o => 
             o.id === orderId ? { ...o, status: newStatus } : o
           ));
 
-          // Показываем подтверждение
           const statusText = {
             'processing': 'в работу',
             'completed': 'выполнен',
@@ -301,11 +332,14 @@
               <h1 className="text-xl font-bold text-gray-800">Админ-панель</h1>
             </div>
             <div className="flex border-t">
-              <button onClick={() => setActiveTab('products')} className={`flex-1 py-3 ${activeTab === 'products' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>
-                Товары ({products.length})
+              <button onClick={() => setActiveTab('products')} className={`flex-1 py-3 text-sm ${activeTab === 'products' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>
+                Товары
               </button>
-              <button onClick={() => setActiveTab('orders')} className={`flex-1 py-3 ${activeTab === 'orders' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>
+              <button onClick={() => setActiveTab('orders')} className={`flex-1 py-3 text-sm ${activeTab === 'orders' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>
                 Заказы ({orders.length})
+              </button>
+              <button onClick={() => setActiveTab('settings')} className={`flex-1 py-3 text-sm ${activeTab === 'settings' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>
+                ⚙️ Настройки
               </button>
             </div>
           </div>
@@ -364,9 +398,6 @@
                         {order.telegram_username && (
                           <p className="text-sm text-blue-600">@{order.telegram_username}</p>
                         )}
-                        {order.telegram_user_id && (
-                          <p className="text-xs text-gray-400">ID: {order.telegram_user_id}</p>
-                        )}
                         {order.customer_comment && (
                           <p className="text-sm text-gray-600 mt-1 italic">{order.customer_comment}</p>
                         )}
@@ -390,7 +421,7 @@
                         <button
                           onClick={() => updateOrderStatus(order.id, 'processing')}
                           disabled={order.status === 'processing'}
-                          className={`flex-1 py-2 rounded text-sm font-medium ${
+                          className={`flex-1 py-2 rounded text-xs font-medium ${
                             order.status === 'processing' 
                               ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                               : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
@@ -401,7 +432,7 @@
                         <button
                           onClick={() => updateOrderStatus(order.id, 'completed')}
                           disabled={order.status === 'completed'}
-                          className={`flex-1 py-2 rounded text-sm font-medium ${
+                          className={`flex-1 py-2 rounded text-xs font-medium ${
                             order.status === 'completed'
                               ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                               : 'bg-green-50 text-green-700 hover:bg-green-100'
@@ -412,7 +443,7 @@
                         <button
                           onClick={() => updateOrderStatus(order.id, 'cancelled')}
                           disabled={order.status === 'cancelled'}
-                          className={`flex-1 py-2 rounded text-sm font-medium ${
+                          className={`flex-1 py-2 rounded text-xs font-medium ${
                             order.status === 'cancelled'
                               ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                               : 'bg-red-50 text-red-700 hover:bg-red-100'
@@ -425,6 +456,94 @@
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {activeTab === 'settings' && (
+            <div className="p-4">
+              <div className="bg-white rounded-lg p-4 shadow-sm mb-4">
+                <h3 className="font-bold text-lg mb-4">⚙️ Настройки магазина</h3>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Название магазина</label>
+                    <input
+                      type="text"
+                      value={settings.shop_name}
+                      onChange={(e) => setSettings({...settings, shop_name: e.target.value})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                      placeholder="Наша Кондитерская"
+                    />
+                  </div>
+
+                  <div className="border-t pt-4">
+                    <h4 className="font-bold text-md mb-3">💳 Настройки оплаты Kaspi</h4>
+                    
+                    <div className="mb-3">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={settings.payment_enabled}
+                          onChange={(e) => setSettings({...settings, payment_enabled: e.target.checked})}
+                          className="w-4 h-4"
+                        />
+                        <span className="text-sm">Включить отправку реквизитов для оплаты</span>
+                      </label>
+                    </div>
+
+                    {settings.payment_enabled && (
+                      <>
+                        <div className="mb-3">
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Номер телефона Kaspi (без +7)
+                          </label>
+                          <input
+                            type="text"
+                            value={settings.kaspi_phone}
+                            onChange={(e) => setSettings({...settings, kaspi_phone: e.target.value})}
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                            placeholder="7771234567"
+                          />
+                          <p className="text-xs text-gray-500 mt-1">
+                            Этот номер будет отправлен клиенту для оплаты
+                          </p>
+                        </div>
+
+                        <div className="mb-3">
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Ссылка на Kaspi (опционально)
+                          </label>
+                          <input
+                            type="text"
+                            value={settings.kaspi_link}
+                            onChange={(e) => setSettings({...settings, kaspi_link: e.target.value})}
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+                            placeholder="https://kaspi.kz/pay/..."
+                          />
+                          <p className="text-xs text-gray-500 mt-1">
+                            Если есть прямая ссылка на оплату
+                          </p>
+                        </div>
+
+                        <div className="bg-blue-50 p-3 rounded-lg">
+                          <p className="text-sm text-blue-800">
+                            <strong>💡 Как это работает:</strong><br/>
+                            После оформления заказа клиенту придёт сообщение с реквизитами для оплаты. 
+                            После оплаты он может написать вам напрямую или прислать чек.
+                          </p>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={saveSettings}
+                    className="w-full bg-indigo-600 text-white py-3 rounded-lg font-medium"
+                  >
+                    💾 Сохранить настройки
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -455,7 +574,6 @@
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">URL изображения</label>
                     <input type="text" value={productForm.image} onChange={(e) => setProductForm({...productForm, image: e.target.value})} className="w-full px-4 py-2 border border-gray-300 rounded-lg" placeholder="https://..." />
-                    <p className="text-xs text-gray-500 mt-1">Вставьте ссылку на изображение</p>
                   </div>
                   <button onClick={handleSaveProduct} className="w-full bg-indigo-600 text-white py-3 rounded-lg font-medium">
                     💾 Сохранить
